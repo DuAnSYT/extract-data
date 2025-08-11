@@ -1,6 +1,6 @@
 import re
 
-def phone(text):
+def extract_phone(text):
     """
     Extract and normalize Vietnamese phone numbers from text.
     
@@ -35,7 +35,7 @@ def phone(text):
         
         if clean_num:
             phone_lists.append(clean_num)
-    return phone_lists
+    return list(set(phone_lists))
 
 def extract_licenses_and_certificates(text):
     """
@@ -99,12 +99,12 @@ def extract_licenses_and_certificates(text):
     }
 
 # Keep separate functions for backward compatibility
-def operating_license(text):
+def extract_operating_license(text):
     """Extract operating licenses only"""
     result = extract_licenses_and_certificates(text)
     return result['operating_licenses']
 
-def medical_certificate(text):
+def extract_medical_certificate(text):
     """Extract medical certificates only"""
     result = extract_licenses_and_certificates(text)
     return result['medical_certificates']

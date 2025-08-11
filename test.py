@@ -68,7 +68,7 @@ def evaluate_phone_extraction(excel_file='data.xlsx'):
         true_phones = set(extract_tagged_phones(tagged_content))
         
         # Extract predicted phones using rule.py
-        pred_phones = set(rule.phone(content))
+        pred_phones = set(rule.extract_phone(content))
         
         # Calculate metrics for this sample
         tp = len(true_phones.intersection(pred_phones))
