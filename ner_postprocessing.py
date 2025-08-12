@@ -22,13 +22,40 @@ class NERPostProcessor:
     def __init__(self):
         # Regex patterns cho các địa chỉ cho phép
         self.allowed_locations = [
+            # TPHCM - các cách viết đầy đủ
             r'(?i).*(?:tp\s*\.?\s*)?h[ồô]\s*ch[íi]\s*minh.*',
             r'(?i).*sài\s*g[òon].*',
-            r'(?i).*b[àa]\s*r[ịi]a\s*v[ũu]ng\s*t[àa]u.*',
-            r'(?i).*b[ìi]nh\s*d[ươuong].*',
             r'(?i).*hcm.*',
             r'(?i).*tphcm.*',
             r'(?i).*thành\s*phố\s*hồ\s*chí\s*minh.*',
+            r'(?i).*ho\s*chi\s*minh.*',
+            
+            # TPHCM - Các quận/huyện cụ thể
+            r'(?i).*(?:q\s*\.?\s*|quận\s+)[1-9](?:\d{1,2})?(?:\s|$|,|\.|\-|\/).*',  # Q.1, Q.12, Quận 1, etc.
+            r'(?i).*(?:quận|q\s*\.?\s*)(?:bình\s*thạnh|tân\s*bình|gò\s*vấp|phú\s*nhuận|tân\s*phú|bình\s*tân).*',
+            r'(?i).*(?:quận|q\s*\.?\s*)(?:thủ\s*đức).*',
+            r'(?i).*thủ\s*đức.*',
+            r'(?i).*(?:huyện|h\s*\.?\s*)(?:củ\s*chi|hóc\s*môn|bình\s*chánh|nhà\s*bè|cần\s*giờ).*',
+            
+            # Bình Dương
+            r'(?i).*b[ìi]nh\s*d[ươuong].*',
+            r'(?i).*binh\s*duong.*',
+            r'(?i).*(?:tp\s*\.?\s*|thành\s*phố\s+)?thủ\s*dầu\s*một.*',
+            r'(?i).*(?:tp\s*\.?\s*|thành\s*phố\s+)?dĩ\s*an.*',
+            r'(?i).*(?:tp\s*\.?\s*|thành\s*phố\s+)?thuận\s*an.*',
+            r'(?i).*(?:thị\s*xã\s+|tx\s*\.?\s*)?tân\s*uyên.*',
+            r'(?i).*(?:thị\s*xã\s+|tx\s*\.?\s*)?bến\s*cát.*',
+            r'(?i).*(?:huyện|h\s*\.?\s*)(?:bàu\s*bàng|dầu\s*tiếng|phú\s*giáo|bắc\s*tân\s*uyên).*',
+            
+            # Bà Rịa - Vũng Tàu
+            r'(?i).*b[àa]\s*r[ịi]a\s*v[ũu]ng\s*t[àa]u.*',
+            r'(?i).*ba\s*ria\s*vung\s*tau.*',
+            r'(?i).*brvt.*',
+            r'(?i).*(?:tp\s*\.?\s*|thành\s*phố\s+)?vũng\s*tàu.*',
+            r'(?i).*(?:tp\s*\.?\s*|thành\s*phố\s+)?bà\s*rịa.*',
+            r'(?i).*(?:thị\s*xã\s+|tx\s*\.?\s*)?phú\s*mỹ.*',
+            r'(?i).*(?:huyện|h\s*\.?\s*)(?:châu\s*đức|xuyên\s*mộc|đất\s*đỏ|tân\s*thành|long\s*điền).*',
+            r'(?i).*côn\s*đảo.*',
         ]
         
         # Compile regex patterns
@@ -221,7 +248,7 @@ class NERPostProcessor:
         organization_name = self.process_organizations(org_entities, threshold, partial_threshold)
         
         # Xử lý locations/addresses
-        loc_entities = entities_by_type.get('LOC', [])
+        loc_entities = entities_by_type.get('ADDR', [])
         addresses = self.process_addresses(loc_entities)
         
         # Có thể thêm xử lý cho các entity type khác nếu cần

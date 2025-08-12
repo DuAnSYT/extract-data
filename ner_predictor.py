@@ -14,7 +14,7 @@ from typing import List, Dict
 class VietnameseNERPredictor:
     """Simple Vietnamese NER Predictor"""
     
-    def __init__(self, model_path: str = "./mdeberta_ner_model/final"):
+    def __init__(self, model_path: str = "./weights/mdeberta_ner_model_1/final"):
         """Initialize predictor with model"""
         self.model_path = model_path
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -157,6 +157,22 @@ class VietnameseNERPredictor:
                     final_chunks.append(current_subchunk.strip())
         
         return [chunk for chunk in final_chunks if chunk.strip()]
+
+    def _fix_bio_tags(tags):
+        """
+        Fix invalid BIO tag sequences by converting first I- tags without preceding B- to B- tags
+        """
+        fixed_tags = list(tags)
+        
+        for i in range(len(fixed_tags)):
+            if fixed_tags[i].startswith('I-'):
+                entity_type = fixed_tags[i][2:]
+                
+                if i == 0 or (not fixed_tags[i-1].startswith('B-' + entity_type) and 
+                            not fixed_tags[i-1].startswith('I-' + entity_type)):
+                    fixed_tags[i] = 'B-' + entity_type
+        
+        return fixed_tags
 
     def predict_text(self, text: str) -> Dict:
         """
