@@ -20,6 +20,35 @@ class NERPostProcessor:
     """Improved Postprocessing cho kết quả NER với fuzzy substring matching"""
     
     def __init__(self):
+        # Danh sách các prefix học hàm học vị cần loại bỏ
+        self.academic_prefixes = [
+            # Học vị tiếng Việt
+            r'(?i)\b(?:bác\s*sĩ?|bs\.?)\b\s*',
+            r'(?i)\b(?:thạc\s*sĩ?|ths\.?)\b\s*',
+            r'(?i)\b(?:tiến\s*sĩ?|ts\.?)\b\s*',
+            r'(?i)\b(?:giáo\s*sư|gs\.?)\b\s*',
+            r'(?i)\b(?:phó\s*giáo\s*sư|pgs\.?)\b\s*',
+            
+            # Chức danh y tế
+            r'(?i)\bck[i1]\.?\b\s*',     # CKI, CK1, CKI., CK1.
+            r'(?i)\bck[ii2]\.?\b\s*',    # CKII, CK2, CKII., CK2.  
+            r'(?i)\bckii\.?\b\s*',       # CKII, CKII. (dạng chữ)
+            r'(?i)\bcki\.?\b\s*',        # CKI, CKI. (dạng chữ)
+            
+            # Học vị tiếng Anh
+            r'(?i)\b(?:dr\.?|doctor)\b\s*',
+            r'(?i)\b(?:prof\.?|professor)\b\s*',
+            r'(?i)\b(?:mr\.?|mrs\.?|ms\.?|miss\.?)\b\s*',
+            
+            # Các chức danh khác
+            r'(?i)\b(?:dược\s*sĩ?|ds\.?)\b\s*',
+            r'(?i)\b(?:y\s*tá|điều\s*dưỡng)\b\s*',
+            r'(?i)\b(?:kỹ\s*thuật\s*viên|ktv\.?)\b\s*',
+        ]
+        
+        # Compile regex patterns cho academic prefixes
+        self.prefix_patterns = [re.compile(pattern) for pattern in self.academic_prefixes]
+        
         # Regex patterns cho các địa chỉ cho phép
         self.allowed_locations = [
             # TPHCM - các cách viết đầy đủ
@@ -147,10 +176,35 @@ class NERPostProcessor:
         
         return False
     
+    def remove_academic_prefix(self, person_name: str) -> str:
+        """
+        Loại bỏ các prefix học hàm học vị từ tên người
+        
+        Args:
+            person_name: Tên người có thể chứa prefix
+            
+        Returns:
+            Tên người đã loại bỏ prefix
+        """
+        cleaned_name = person_name.strip()
+        
+        # Áp dụng từng pattern để loại bỏ prefix
+        for pattern in self.prefix_patterns:
+            cleaned_name = pattern.sub('', cleaned_name).strip()
+        
+        # Loại bỏ khoảng trắng thừa và normalize
+        cleaned_name = re.sub(r'\s+', ' ', cleaned_name).strip()
+        
+        # Nếu sau khi loại bỏ prefix mà tên trống thì trả về tên gốc
+        if not cleaned_name:
+            return person_name.strip()
+        
+        return cleaned_name
+    
     def process_organizations(self, org_entities: List[Dict], threshold: float = 0.8, partial_threshold: float = 0.9) -> str:
         """
         Xử lý danh sách organizations với improved fuzzy matching
-        Trả về organization name tốt nhất
+        Trả về list organization name
         
         Args:
             org_entities: List entities của ORG
@@ -158,13 +212,13 @@ class NERPostProcessor:
             partial_threshold: Ngưỡng cho partial similarity
         """
         if not org_entities:
-            return ""
+            return []
         
         # Lấy tất cả text của organizations
         org_texts = [entity['text'].strip() for entity in org_entities]
         
         if len(org_texts) == 1:
-            return org_texts[0]
+            return org_texts
         
         # Đếm frequency của từng organization (exact match)
         org_counter = Counter(org_texts)
@@ -198,12 +252,16 @@ class NERPostProcessor:
             for similar_org in similar_orgs:
                 processed.add(similar_org)
         
-        # Chọn organization có count cao nhất
+        # # Chọn organization có count cao nhất
+        # if grouped_orgs:
+        #     best_org = max(grouped_orgs.items(), key=lambda x: x[1])[0]
+        #     return best_org.strip()
+
         if grouped_orgs:
-            best_org = max(grouped_orgs.items(), key=lambda x: x[1])[0]
-            return best_org.strip()
-        
-        return ""
+            sorted_orgs = sorted(grouped_orgs.items(), key=lambda x: x[1], reverse=True)
+            return [org for org, count in sorted_orgs]
+
+        return []
     
     def process_addresses(self, loc_entities: List[Dict]) -> List[str]:
         """
@@ -226,6 +284,122 @@ class NERPostProcessor:
         
         return allowed_addresses
     
+    def clean_person_name(self, name: str) -> str:
+        """
+        Làm sạch tên người - loại bỏ ký tự dư thừa, prefix, etc.
+        """
+        if not name:
+            return ""
+            
+        cleaned = name.strip()
+        
+        # Loại bỏ prefix học hàm học vị
+        cleaned = self.remove_academic_prefix(cleaned)
+        
+        # Loại bỏ các ký tự dư thừa ở đầu và cuối
+        cleaned = re.sub(r'^[-.\s]+', '', cleaned)  # Loại bỏ -, . ở đầu
+        cleaned = re.sub(r'[-.\s]+$', '', cleaned)  # Loại bỏ -, . ở cuối
+        
+        # Normalize khoảng trắng
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        
+        # Normalize case - chuyển về title case cho tên người Việt
+        if cleaned and re.search(r'[a-zA-ZÀ-ỹ]', cleaned):
+            cleaned = self.normalize_vietnamese_name(cleaned)
+        
+        return cleaned
+    
+    def normalize_vietnamese_name(self, name: str) -> str:
+        """
+        Chuẩn hóa tên người Việt về dạng title case
+        """
+        # Split thành các từ và capitalize từng từ
+        words = name.split()
+        normalized_words = []
+        
+        for word in words:
+            # Capitalize từng từ (chữ đầu viết hoa, còn lại viết thường)
+            if word:
+                normalized_words.append(word.capitalize())
+        
+        return ' '.join(normalized_words)
+    
+    def is_substring_name(self, short_name: str, long_name: str) -> bool:
+        """
+        Kiểm tra xem short_name có phải là substring của long_name không
+        (để dedup các trường hợp như "Vũ" trong "Hồ Cao Vũ")
+        """
+        if not short_name or not long_name:
+            return False
+            
+        short_clean = short_name.lower().strip()
+        long_clean = long_name.lower().strip()
+        
+        # Kiểm tra substring exact
+        if short_clean in long_clean and len(short_clean) < len(long_clean):
+            return True
+            
+        return False
+    
+    def process_persons(self, per_entities: List[Dict]) -> List[str]:
+        """
+        Xử lý danh sách persons với advanced cleaning và case-insensitive substring dedup
+        """
+        if not per_entities:
+            return []
+        
+        # Bước 1: Clean tất cả tên
+        cleaned_persons = []
+        for entity in per_entities:
+            person_raw = entity['text'].strip()
+            person_cleaned = self.clean_person_name(person_raw)
+            
+            # Chỉ giữ tên có ý nghĩa (>= 2 ký tự, không chỉ toàn ký tự đặc biệt)
+            if person_cleaned and len(person_cleaned) >= 2 and re.search(r'[a-zA-ZÀ-ỹ]', person_cleaned):
+                cleaned_persons.append(person_cleaned)
+        
+        if not cleaned_persons:
+            return []
+        
+        # Bước 2: Loại bỏ exact duplicates (case-insensitive)
+        seen_lower = {}
+        unique_persons = []
+        
+        for person in cleaned_persons:
+            person_lower = person.lower()
+            if person_lower not in seen_lower:
+                seen_lower[person_lower] = person
+                unique_persons.append(person)
+        
+        # Bước 3: Loại bỏ substring duplicates (case-insensitive, giữ chuỗi dài nhất)
+        final_persons = []
+        
+        for person in unique_persons:
+            is_substring = False
+            
+            # Kiểm tra xem person này có phải substring của ai đã có trong final_persons không
+            for existing in final_persons:
+                if self.is_substring_name(person, existing):
+                    is_substring = True
+                    break
+            
+            if not is_substring:
+                # Kiểm tra ngược lại: person này có chứa substring nào trong final_persons không
+                # Nếu có thì thay thế (giữ cái dài hơn)
+                to_remove = []
+                for i, existing in enumerate(final_persons):
+                    if self.is_substring_name(existing, person):
+                        to_remove.append(i)
+                
+                # Xóa các substring cũ
+                for i in reversed(to_remove):
+                    final_persons.pop(i)
+                
+                # Thêm person hiện tại
+                final_persons.append(person)
+        
+        return final_persons
+    
     def postprocess(self, ner_results: Dict, threshold: float = 0.8, partial_threshold: float = 0.9) -> Dict:
         """
         Main postprocessing function với improved fuzzy matching
@@ -237,19 +411,24 @@ class NERPostProcessor:
             
         Returns:
             Dict với format: {
-                'organization_name': str,
-                'address': List[str]
+                'organization_name': List[str],
+                'address': List[str],
+                'person': List[str]
             }
         """
         entities_by_type = ner_results.get('entities_by_type', {})
         
         # Xử lý organizations với improved logic
         org_entities = entities_by_type.get('ORG', [])
-        organization_name = self.process_organizations(org_entities, threshold, partial_threshold)
+        organization_names = self.process_organizations(org_entities, threshold, partial_threshold)
         
         # Xử lý locations/addresses
         loc_entities = entities_by_type.get('ADDR', [])
         addresses = self.process_addresses(loc_entities)
+        
+        # Xử lý persons
+        per_entities = entities_by_type.get('PER', [])
+        persons = self.process_persons(per_entities)
         
         # Có thể thêm xử lý cho các entity type khác nếu cần
         gpe_entities = entities_by_type.get('GPE', [])
@@ -260,8 +439,9 @@ class NERPostProcessor:
             addresses = list(dict.fromkeys(all_addresses))
         
         return {
-            'organization_name': organization_name,
-            'address': addresses
+            'organization_names': organization_names,
+            'addresses': addresses,
+            'persons': persons
         }
 
 
@@ -288,7 +468,8 @@ def quick_postprocess(ner_results: Dict, threshold: float = 0.8, partial_thresho
     Returns:
         Dict với format: {
             'organization_name': str,
-            'address': List[str]
+            'address': List[str],
+            'person': List[str]
         }
     """
     processor = get_processor()
@@ -296,9 +477,75 @@ def quick_postprocess(ner_results: Dict, threshold: float = 0.8, partial_thresho
 
 
 def test_improved_fuzzy():
-    """🧪 Test improved fuzzy substring matching"""
+    """🧪 Test improved fuzzy substring matching và academic prefix removal"""
     
     processor = NERPostProcessor()
+    
+    # Test cases cho academic prefix removal và cleaning
+    print("=== Test Person Name Cleaning ===")
+    test_persons = [
+        "Bác sĩ Nguyễn Văn A",
+        "BS. Trần Thị B", 
+        "Thạc sĩ Lê Minh C",
+        "TS. Phạm Đức D",
+        "Giáo sư Hoàng Thị E",
+        "PGS.TS. Vũ Văn F",
+        "Dr. John Smith",
+        "CKI Nguyễn Thành G",
+        "CKI. Lê Văn M", 
+        "CKII Lý Thị H",
+        "CKII. Phạm Thị N",
+        "CK1. Trần Minh O",
+        "CK2. Hoàng Thị P",
+        "Dược sĩ Cao Minh I",
+        "Y tá Đinh Thị J",
+        "Mr. David Wilson",
+        "Nguyễn Văn K",  # Không có prefix
+        "Bác sĩ",        # Chỉ có prefix
+        "- Hồ Cao Vũ",   # Có dấu - ở đầu
+        ". Hồ Cao Vũ",   # Có dấu . ở đầu
+        ". Vũ",          # Chỉ có tên ngắn
+        "Hồ Cao Vũ",     # Tên bình thường
+    ]
+    
+    for person in test_persons:
+        cleaned = processor.clean_person_name(person)
+        print(f"'{person}' → '{cleaned}'")
+    print()
+    
+    # Test substring deduplication
+    print("=== Test Substring Deduplication ===")
+    test_entities = [
+        {'text': '- Hồ Cao Vũ', 'label': 'PER', 'confidence': 0.95},
+        {'text': '. Hồ Cao Vũ', 'label': 'PER', 'confidence': 0.92},
+        {'text': '. Vũ', 'label': 'PER', 'confidence': 0.88},
+        {'text': 'Hồ Cao Vũ', 'label': 'PER', 'confidence': 0.90},
+        {'text': 'Bác sĩ Nguyễn Văn A', 'label': 'PER', 'confidence': 0.93},
+        {'text': 'Nguyễn Văn A', 'label': 'PER', 'confidence': 0.89},
+        {'text': 'A', 'label': 'PER', 'confidence': 0.85},
+    ]
+    
+    result_persons = processor.process_persons(test_entities)
+    print("Input entities:")
+    for entity in test_entities:
+        print(f"  - '{entity['text']}'")
+    print(f"After processing: {result_persons}")
+    print()
+    
+    # Test case-insensitive deduplication (từ data thực của user)
+    print("=== Test Case-Insensitive Deduplication (Real Data) ===")
+    real_test_entities = [
+        {'text': 'BÁC VĂN', 'label': 'PER', 'confidence': 0.95},
+        {'text': 'bác Văn', 'label': 'PER', 'confidence': 0.92},
+        {'text': 'trưởng khoa Lê Viết Văn', 'label': 'PER', 'confidence': 0.90},
+    ]
+    
+    real_result_persons = processor.process_persons(real_test_entities)
+    print("Input entities:")
+    for entity in real_test_entities:
+        print(f"  - '{entity['text']}'")
+    print(f"After processing: {real_result_persons}")
+    print()
     
     # Test cases cho fuzzy substring
     test_cases = [
@@ -337,14 +584,22 @@ def test_improved_fuzzy():
                 {'text': 'TP Hồ Chí Minh', 'label': 'LOC', 'confidence': 0.89},
                 {'text': 'Bình Dương', 'label': 'LOC', 'confidence': 0.87},
                 {'text': 'Hà Nội', 'label': 'LOC', 'confidence': 0.85}
+            ],
+            'PER': [
+                {'text': 'Bác sĩ Nguyễn Văn A', 'label': 'PER', 'confidence': 0.92},
+                {'text': 'TS. Trần Thị B', 'label': 'PER', 'confidence': 0.88},
+                {'text': 'Nguyễn Văn A', 'label': 'PER', 'confidence': 0.90},
+                {'text': 'CKI Lê Minh C', 'label': 'PER', 'confidence': 0.85},
+                {'text': 'Dr. John Smith', 'label': 'PER', 'confidence': 0.87}
             ]
         }
     }
     
     print("=== Test Real NER Data ===")
     result = quick_postprocess(test_ner_results)
-    print(f"Organization: '{result['organization_name']}'")
-    print(f"Addresses: {result['address']}")
+    print(f"Organizations: {result['organization_names']}")
+    print(f"Addresses: {result['addresses']}")
+    print(f"Persons: {result['persons']}")
     
     print(f"\n=== Using RapidFuzz: {RAPIDFUZZ_AVAILABLE} ===")
 

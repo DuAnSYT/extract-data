@@ -99,12 +99,12 @@ def extract_licenses_and_certificates(text):
     }
 
 # Keep separate functions for backward compatibility
-def extract_operating_license(text):
+def operating_license(text):
     """Extract operating licenses only"""
     result = extract_licenses_and_certificates(text)
     return result['operating_licenses']
 
-def extract_medical_certificate(text):
+def medical_certificate(text):
     """Extract medical certificates only"""
     result = extract_licenses_and_certificates(text)
     return result['medical_certificates']
