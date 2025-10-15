@@ -201,6 +201,65 @@ class NERPostProcessor:
         
         return cleaned_name
     
+    def expand_medical_abbreviations(self, org_name: str) -> str:
+        """
+        Mở rộng các từ viết tắt trong tên cơ sở y tế
+        
+        Args:
+            org_name: Tên cơ sở có thể chứa viết tắt
+            
+        Returns:
+            Tên cơ sở đã mở rộng viết tắt
+        """
+        if not org_name:
+            return org_name
+            
+        # Danh sách các viết tắt y tế phổ biến
+        abbreviations = {
+            # ===== Viết tắt bệnh viện & đa khoa =====
+            r'\bbvdk\b': 'bệnh viện đa khoa',  # đặt trước để tránh xung đột với bv + dk
+            r'\bbv\b': 'bệnh viện',
+            r'\bdk\b': 'đa khoa',
+
+            # ===== Các viết tắt chuyên khoa =====
+            r'\bpk\b': 'phòng khám',
+            r'\btm\b': 'thẩm mỹ',
+            r'\btw\b': 'trung ương',
+            r'\bqt\b': 'quốc tế',
+            r'\bđhyd?\b': 'đại học y dược',
+            r'\bdhyd?\b': 'đại học y dược',
+            r'\btkb\b': 'tai - mũi - họng',
+            r'\btmh\b': 'tai - mũi - họng',
+            r'\brhm?\b': 'răng - hàm - mặt',
+            r'\bphcn\b': 'phục hồi chức năng',
+            r'\bcchs\b': 'cấp cứu hồi sức',
+
+            # ===== Viết tắt địa danh =====
+            r'\btphcm\b': 'tp hồ chí minh',
+            r'\bhcm\b': 'hồ chí minh',
+            r'\bq\.?\s*(\d+)\b': r'quận \1',
+        }
+        
+        expanded = org_name.lower().strip()
+        
+        # Áp dụng từng pattern để mở rộng viết tắt
+        for abbrev_pattern, full_form in abbreviations.items():
+            expanded = re.sub(abbrev_pattern, full_form, expanded, flags=re.IGNORECASE)
+        
+        # Normalize khoảng trắng
+        expanded = re.sub(r'\s+', ' ', expanded).strip()
+        
+        # Chuyển về title case
+        if expanded:
+            words = expanded.split()
+            capitalized_words = []
+            for word in words:
+                if word:
+                    capitalized_words.append(word.capitalize())
+            expanded = ' '.join(capitalized_words)
+        
+        return expanded if expanded else org_name
+    
     def process_organizations(self, org_entities: List[Dict], threshold: float = 0.8, partial_threshold: float = 0.9) -> str:
         """
         Xử lý danh sách organizations với improved fuzzy matching
@@ -214,8 +273,8 @@ class NERPostProcessor:
         if not org_entities:
             return []
         
-        # Lấy tất cả text của organizations
-        org_texts = [entity['text'].strip() for entity in org_entities]
+        # Lấy tất cả text của organizations và mở rộng viết tắt
+        org_texts = [self.expand_medical_abbreviations(entity['text'].strip()) for entity in org_entities]
         
         if len(org_texts) == 1:
             return org_texts
@@ -265,7 +324,7 @@ class NERPostProcessor:
     
     def process_addresses(self, loc_entities: List[Dict]) -> List[str]:
         """
-        Xử lý danh sách địa chỉ, chỉ giữ lại những địa chỉ thuộc vùng cho phép
+        Xử lý danh sách địa chỉ, chỉ giữ lại những địa chỉ thuộc vùng cho phép và dài hơn 10 ký tự
         """
         if not loc_entities:
             return []
@@ -277,8 +336,10 @@ class NERPostProcessor:
             address = entity['text'].strip()
             address_lower = address.lower()
             
-            # Kiểm tra trùng lặp và location hợp lệ
-            if address_lower not in seen_addresses and self.is_allowed_location(address):
+            # Kiểm tra trùng lặp, location hợp lệ và độ dài >= 10 ký tự
+            if (address_lower not in seen_addresses and 
+                self.is_allowed_location(address) and 
+                len(address) >= 10):
                 allowed_addresses.append(address)
                 seen_addresses.add(address_lower)
         
@@ -480,6 +541,30 @@ def test_improved_fuzzy():
     """🧪 Test improved fuzzy substring matching và academic prefix removal"""
     
     processor = NERPostProcessor()
+    
+    # Test cases cho medical abbreviation expansion
+    print("=== Test Medical Abbreviation Expansion ===")
+    test_orgs = [
+        "BV Chợ Rẫy",
+        "BVDK Tân Tạo", 
+        "BV TM Hana",
+        "Phòng khám PK ABC",
+        "BV NT Q7",
+        "DHYD TPHCM",
+        "BV Răng Hàm Mặt RHMM",
+        "Phòng khám TMH Q1",
+        "BV Tim TPHCM",
+        "Trung tâm PHCN",
+        "BV CCHS 115",
+        "Bệnh viện Từ Dũ",  # Không có viết tắt
+        "BV Q.1",
+        "BVDK Q 10"
+    ]
+    
+    for org in test_orgs:
+        expanded = processor.expand_medical_abbreviations(org)
+        print(f"'{org}' → '{expanded}'")
+    print()
     
     # Test cases cho academic prefix removal và cleaning
     print("=== Test Person Name Cleaning ===")
