@@ -6,9 +6,11 @@ Chỉ có function cơ bản để dự đoán NER từ model đã train
 """
 
 import torch
+import os
 import re
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 from typing import List, Dict
+from underthesea import sent_tokenize as vn_sent_tokenize
 
 
 class VietnameseNERPredictor:
@@ -16,9 +18,9 @@ class VietnameseNERPredictor:
     
     def __init__(self, model_path: str = "mdeberta_ner_model/final"):
         """Initialize predictor with model"""
-        self.model_path = model_path
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        self.model = AutoModelForTokenClassification.from_pretrained(model_path)
+        self.model_path = os.path.join(os.path.dirname(__file__), model_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+        self.model = AutoModelForTokenClassification.from_pretrained(self.model_path)
         self.model.eval()
 
         self._TOKENIZER = self.tokenizer # alias
@@ -31,7 +33,8 @@ class VietnameseNERPredictor:
         else:
             print("Model loaded on CPU")
 
-    def _vn_sentences(s: str) -> List[str]:
+    def _vn_sentences(self, s: str) -> List[str]:
+        raise NotImplementedError
         return [t.strip() for t in vn_sent_tokenize(s) if t.strip()]
     
     def remove_hrules(self, text: str) -> str:
@@ -64,7 +67,7 @@ class VietnameseNERPredictor:
             text_without_hashtags = re.sub(hashtag_pattern, '', text).strip()
             
             # Xoá các chuỗi kẻ ngang trước khi chunk
-            text_without_hashtags = remove_hrules(text_without_hashtags)
+            text_without_hashtags = self.remove_hrules(text_without_hashtags)
             
             # Tách văn bản thành các segments theo loại
             segments = []
@@ -185,7 +188,7 @@ class VietnameseNERPredictor:
                         # cắt contact “an toàn” theo câu/cụm (giữ các phần liền kề)
                         def _split_contact(s: str) -> List[str]:
                             out, cur = [], ""
-                            sents = _vn_sentences(s) or [s]
+                            sents = self._vn_sentences(s) or [s]
                             for sent in sents:
                                 cand = (cur + (" " if cur else "") + sent).strip()
                                 if _tok_len(cand) <= max_length:
@@ -272,7 +275,7 @@ class VietnameseNERPredictor:
                     continue
                 
                 # Tách câu, sau đó gộp lại theo token
-                sentences = _vn_sentences(ch)
+                sentences = self._vn_sentences(ch)
                 if not sentences:
                     sentences = [ch]
                 
@@ -360,7 +363,7 @@ class VietnameseNERPredictor:
         except Exception:
             # Fallback: tách theo câu trước, sau đó mới theo từ
             try:
-                sentences = _vn_sentences(text)
+                sentences = self._vn_sentences(text)
                 chunks = []
                 current_chunk = ""
                 
@@ -455,6 +458,8 @@ class VietnameseNERPredictor:
             Dictionary chứa kết quả dự đoán
         """
         chunks = self.smart_chunk_text(text)
+        for idx, chunk in enumerate(chunks):
+            print(f"chunk {idx}: {chunk}")
         all_entities = []
         current_offset = 0
         for chunk in chunks:

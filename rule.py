@@ -47,7 +47,7 @@ def extract_licenses_and_certificates(text):
         dict: Dictionary with separate lists for licenses and certificates
     """
     # Combined pattern for both types
-    combined_regex = r'\b\d{2,6}\s*/\s*(HCM|SYT|BYT)(?:-(GPHĐ|CCHN))?\b'
+    combined_regex = r'\b\d{2,7}\s*/\s*(HCM|SYT|BYT)(?:-(GPHĐ|CCHN))?\b'
     
     operating_licenses = []
     medical_certificates = []

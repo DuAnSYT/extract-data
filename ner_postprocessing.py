@@ -24,16 +24,18 @@ class NERPostProcessor:
         self.academic_prefixes = [
             # Học vị tiếng Việt
             r'(?i)\b(?:bác\s*sĩ?|bs\.?)\b\s*',
+            r'(?i)\b(?:cử\s*nhân|cn\.?)\b\s*',
             r'(?i)\b(?:thạc\s*sĩ?|ths\.?)\b\s*',
             r'(?i)\b(?:tiến\s*sĩ?|ts\.?)\b\s*',
             r'(?i)\b(?:giáo\s*sư|gs\.?)\b\s*',
             r'(?i)\b(?:phó\s*giáo\s*sư|pgs\.?)\b\s*',
             
             # Chức danh y tế
-            r'(?i)\bck[i1]\.?\b\s*',     # CKI, CK1, CKI., CK1.
-            r'(?i)\bck[ii2]\.?\b\s*',    # CKII, CK2, CKII., CK2.  
-            r'(?i)\bckii\.?\b\s*',       # CKII, CKII. (dạng chữ)
-            r'(?i)\bcki\.?\b\s*',        # CKI, CKI. (dạng chữ)
+            # ===== Chuyên khoa (đủ cả dạng chữ & viết tắt) =====
+            r'(?i)\b(?:chuyên\s*khoa\s*(?:i|1)|cki\.?)\b\s*',   # Chuyên khoa I / CKI / CK1
+            r'(?i)\b(?:chuyên\s*khoa\s*(?:ii|2)|ckii\.?)\b\s*', # Chuyên khoa II / CKII / CK2
+
+            r'(?i)\bbscc\.?\b',             # BSCC.
             
             # Học vị tiếng Anh
             r'(?i)\b(?:dr\.?|doctor)\b\s*',
@@ -44,6 +46,8 @@ class NERPostProcessor:
             r'(?i)\b(?:dược\s*sĩ?|ds\.?)\b\s*',
             r'(?i)\b(?:y\s*tá|điều\s*dưỡng)\b\s*',
             r'(?i)\b(?:kỹ\s*thuật\s*viên|ktv\.?)\b\s*',
+            r'(?i)\b(?:thầy\s*thuốc|tt\.?)\b\s*',
+            r'(?i)\b(?:giám\s*đốc|gd\.?|gđ\.?)\b\s*',
         ]
         
         # Compile regex patterns cho academic prefixes
@@ -218,8 +222,11 @@ class NERPostProcessor:
         abbreviations = {
             # ===== Viết tắt bệnh viện & đa khoa =====
             r'\bbvdk\b': 'bệnh viện đa khoa',  # đặt trước để tránh xung đột với bv + dk
+            r'\bbvđk\b': 'bệnh viện đa khoa',   # thêm dạng có đ
             r'\bbv\b': 'bệnh viện',
             r'\bdk\b': 'đa khoa',
+            r'\bđk\b': 'đa khoa',
+            r'\bttyt\b': 'trung tâm y tế',
 
             # ===== Các viết tắt chuyên khoa =====
             r'\bpk\b': 'phòng khám',
@@ -235,9 +242,15 @@ class NERPostProcessor:
             r'\bcchs\b': 'cấp cứu hồi sức',
 
             # ===== Viết tắt địa danh =====
-            r'\btphcm\b': 'tp hồ chí minh',
+            r'\btp\.?\s*(?:hồ\s*chí\s*minh|hcm)\b': 'thành phố hồ chí minh',
+            r'\btp\.?(?=\s|$)': 'thành phố',
             r'\bhcm\b': 'hồ chí minh',
             r'\bq\.?\s*(\d+)\b': r'quận \1',
+
+            #==== Các viết tắt khác =====
+            r'\bCP\b': 'cổ phần',
+            r'\bcty\b': 'công ty',
+            r'\btnhh\b': 'trách nhiệm hữu hạn',
         }
         
         expanded = org_name.lower().strip()
@@ -566,7 +579,34 @@ def test_improved_fuzzy():
         print(f"'{org}' → '{expanded}'")
     print()
     
-    # Test cases cho academic prefix removal và cleaning
+    # Test cases cho address cleaning
+    print("=== Test Address Cleaning ===")
+    test_addresses = [
+        "123 Nguyễn Văn A, Quận 1, TP.HCM (gần chợ Bến Thành)",
+        "456 Lê Lợi, Q.3, TPHCM [tầng 2, toà nhà ABC]",
+        "789 Trần Hưng Đạo, Q1 {cạnh ngân hàng Vietcombank}",
+        "321 Hai Bà Trưng, Quận 3, gần siêu thị BigC",
+        "654 Võ Văn Tần, Q.3, đối diện bệnh viện Chợ Rẫy",
+        "987 Nam Kỳ Khởi Nghĩa, phía sau chợ Nguyễn Thiện Thuật",
+        "159 Pasteur, Quận 1, lầu 3 block A",
+        "753 Cách Mạng Tháng 8, tầng 5 toà nhà Diamond Plaza",
+        "852 Nguyễn Thị Minh Khai, toà nhà Landmark 81",
+        "951 Đường D1, Quận 7, số 25A căn hộ B1-08",
+        "- 147 Nguyễn Du, Q.1, TPHCM.,",  # Có ký tự dư thừa
+        ". 258 Lý Tự Trọng, Q.1 ;;",      # Có ký tự dư thừa
+        "123 ABC ()",                      # Ngoặc rỗng
+        "456 XYZ []",                      # Ngoặc vuông rỗng
+        "789 DEF {}",                      # Ngoặc nhọn rỗng
+        "Bệnh viện Chợ Rẫy, 201B Nguyễn Chí Thanh, Quận 5, TP.HCM",  # Địa chỉ bình thường
+    ]
+    
+    for address in test_addresses:
+        cleaned = processor.clean_address(address)
+        print(f"'{address}'")
+        print(f"→ '{cleaned}'")
+        print()
+    
+    # Test cases cho person name cleaning và academic prefix removal
     print("=== Test Person Name Cleaning ===")
     test_persons = [
         "Bác sĩ Nguyễn Văn A",
@@ -655,6 +695,23 @@ def test_improved_fuzzy():
         print(f"  Full similarity: {full_sim:.3f}")
         print()
     
+    # Test address processing với real data
+    print("=== Test Address Processing (Real Data) ===")
+    test_address_entities = [
+        {'text': '123 Nguyễn Văn A, Quận 1, TP.HCM (gần chợ Bến Thành)', 'label': 'ADDR', 'confidence': 0.95},
+        {'text': '456 Lê Lợi, Q.3, TPHCM [tầng 2]', 'label': 'ADDR', 'confidence': 0.92},
+        {'text': 'Bệnh viện Chợ Rẫy, 201B Nguyễn Chí Thanh, Quận 5, TP.HCM', 'label': 'ADDR', 'confidence': 0.90},
+        {'text': 'Hà Nội', 'label': 'ADDR', 'confidence': 0.85},  # Không thuộc vùng cho phép
+        {'text': '789 ABC, gần siêu thị', 'label': 'ADDR', 'confidence': 0.88},  # Quá ngắn sau khi clean
+    ]
+    
+    result_addresses = processor.process_addresses(test_address_entities)
+    print("Input address entities:")
+    for entity in test_address_entities:
+        print(f"  - '{entity['text']}'")
+    print(f"After processing: {result_addresses}")
+    print()
+    
     # Test với real data
     test_ner_results = {
         'entities_by_type': {
@@ -665,10 +722,10 @@ def test_improved_fuzzy():
                 {'text': 'VinMart', 'label': 'ORG', 'confidence': 0.90},
                 {'text': 'Siêu thị VinMart Plus', 'label': 'ORG', 'confidence': 0.88},
             ],
-            'LOC': [
-                {'text': 'TP Hồ Chí Minh', 'label': 'LOC', 'confidence': 0.89},
-                {'text': 'Bình Dương', 'label': 'LOC', 'confidence': 0.87},
-                {'text': 'Hà Nội', 'label': 'LOC', 'confidence': 0.85}
+            'ADDR': [
+                {'text': '123 Nguyễn Văn A, Quận 1, TP.HCM (gần chợ)', 'label': 'ADDR', 'confidence': 0.89},
+                {'text': 'Thủ Đức, TP.HCM [khu vực trung tâm]', 'label': 'ADDR', 'confidence': 0.87},
+                {'text': 'Hà Nội', 'label': 'ADDR', 'confidence': 0.85}
             ],
             'PER': [
                 {'text': 'Bác sĩ Nguyễn Văn A', 'label': 'PER', 'confidence': 0.92},

@@ -2,4 +2,5 @@ numpy==2.3.2
 pandas==2.3.1
 torch==2.8.0
 transformers==4.55.0
-rapidfuzz
+rapidfuzz==3.13.0
+underthesea==8.3.0
