@@ -32,8 +32,9 @@ class NERPostProcessor:
             
             # Chức danh y tế
             # ===== Chuyên khoa (đủ cả dạng chữ & viết tắt) =====
-            r'(?i)\b(?:chuyên\s*khoa\s*(?:i|1)|cki\.?)\b\s*',   # Chuyên khoa I / CKI / CK1
-            r'(?i)\b(?:chuyên\s*khoa\s*(?:ii|2)|ckii\.?)\b\s*', # Chuyên khoa II / CKII / CK2
+            r'(?i)\b(?:chuyên\s*khoa\s*(?:i|1)|cki\.?|ck1\.?)\b\s*',   # Chuyên khoa I / CKI / CK1
+            r'(?i)\b(?:chuyên\s*khoa\s*(?:ii|2)|ckii\.?|ck2\.?)\b\s*', # Chuyên khoa II / CKII / CK2
+            r'(?i)\b(?:chuyên\s*gia)\b\s*',                            # Chuyên gia
 
             r'(?i)\bbscc\.?\b',             # BSCC.
             
@@ -289,6 +290,24 @@ class NERPostProcessor:
         # Lấy tất cả text của organizations và mở rộng viết tắt
         org_texts = [self.expand_medical_abbreviations(entity['text'].strip()) for entity in org_entities]
         
+        # Filter bỏ các tên tổ chức quá ngắn hoặc lỗi token
+        # Logic: Nếu có <= 3 từ VÀ mỗi từ < 3 ký tự thì loại bỏ
+        # Ví dụ loại: "Ệ Th" (2 từ, mỗi từ 1-2 ký tự)
+        # Ví dụ giữ: "VinMec" (1 từ, 6 ký tự), "Vin AI" (2 từ, 1 từ >= 3 ký tự)
+        filtered_orgs = []
+        for org in org_texts:
+            components = org.split()
+            if len(components) <= 3:
+                # Kiểm tra xem có ít nhất 1 component >= 3 ký tự không
+                has_valid_component = any(len(comp) >= 3 for comp in components)
+                if has_valid_component:
+                    filtered_orgs.append(org)
+            else:
+                # Nếu có > 3 từ thì giữ lại (tên dài, khả năng cao là hợp lệ)
+                filtered_orgs.append(org)
+        
+        org_texts = filtered_orgs
+        
         if len(org_texts) == 1:
             return org_texts
         
@@ -370,11 +389,11 @@ class NERPostProcessor:
         # Loại bỏ prefix học hàm học vị
         cleaned = self.remove_academic_prefix(cleaned)
         
-        # Loại bỏ các ký tự dư thừa ở đầu và cuối
-        cleaned = re.sub(r'^[-.\s]+', '', cleaned)  # Loại bỏ -, . ở đầu
-        cleaned = re.sub(r'[-.\s]+$', '', cleaned)  # Loại bỏ -, . ở cuối
+        # Loại bỏ TẤT CẢ các ký tự không phải chữ cái (alphabet) và khoảng trắng
+        # Giữ lại: chữ cái tiếng Việt (a-z, A-Z, À-ỹ) và khoảng trắng
+        cleaned = re.sub(r'[^a-zA-ZÀ-ỹ\s]+', ' ', cleaned)
         
-        # Normalize khoảng trắng
+        # Normalize khoảng trắng (loại bỏ khoảng trắng thừa)
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         
         # Normalize case - chuyển về title case cho tên người Việt

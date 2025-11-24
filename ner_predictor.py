@@ -16,7 +16,7 @@ from underthesea import sent_tokenize as vn_sent_tokenize
 class VietnameseNERPredictor:
     """Simple Vietnamese NER Predictor"""
     
-    def __init__(self, model_path: str = "mdeberta_ner_model/final"):
+    def __init__(self, model_path: str = "weights/mdeberta_ner_model/final"):
         """Initialize predictor with model"""
         self.model_path = os.path.join(os.path.dirname(__file__), model_path)
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
@@ -458,8 +458,6 @@ class VietnameseNERPredictor:
             Dictionary chứa kết quả dự đoán
         """
         chunks = self.smart_chunk_text(text)
-        for idx, chunk in enumerate(chunks):
-            print(f"chunk {idx}: {chunk}")
         all_entities = []
         current_offset = 0
         for chunk in chunks:
