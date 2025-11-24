@@ -10,13 +10,13 @@ import os
 import re
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 from typing import List, Dict
-from underthesea import sent_tokenize as vn_sent_tokenize
+from underthesea import sent_tokenize
 
 
 class VietnameseNERPredictor:
     """Simple Vietnamese NER Predictor"""
     
-    def __init__(self, model_path: str = "weights/mdeberta_ner_model/final"):
+    def __init__(self, model_path: str = "visobert_model/final"):
         """Initialize predictor with model"""
         self.model_path = os.path.join(os.path.dirname(__file__), model_path)
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
@@ -25,6 +25,7 @@ class VietnameseNERPredictor:
 
         self._TOKENIZER = self.tokenizer # alias
         self.MAX_LENGTH = 512
+        self.tokenizer.model_max_length = self.MAX_LENGTH
         
         # Move to GPU if available
         if torch.cuda.is_available():
@@ -33,403 +34,83 @@ class VietnameseNERPredictor:
         else:
             print("Model loaded on CPU")
 
-    def _vn_sentences(self, s: str) -> List[str]:
-        raise NotImplementedError
-        return [t.strip() for t in vn_sent_tokenize(s) if t.strip()]
-    
-    def remove_hrules(self, text: str) -> str:
-        """Xóa chuỗi kẻ ngang (----, ————, ____) ≥ 4 ký tự, giữ nguyên các ký tự khác."""
-        return re.sub(r"[-–—_]{4,}", "", text)
-    
-    def smart_chunk_text(self, text: str, max_length: int = 512) -> List[str]:
+    def smart_chunk_text(self, item: dict, max_length: int = 512):
         """
-        Chunking văn bản tối ưu để đạt gần max_length (tính theo TOKEN)
-        
-        Quy tắc 1: Các mục trong danh sách có thể ghép lại với nhau
-        Quy tắc 2: Các khối liên hệ và siêu dữ liệu là không thể chia cắt  
-        Quy tắc 3: Xử lý Hashtag
+        Chia nhỏ văn bản thành các chunk và tính toán lại nhãn dựa trên lát cắt thực tế.
+        Returns list of dicts: {"text": chunk_text, "label": new_labels}
         """
-        # Helper: đếm token (kể cả special tokens để sát giới hạn mô hình)
-        def _tok_len(s: str) -> int:
-            # Lưu ý: encode cả special tokens để mỗi chunk khi đưa vào model không vượt quá max_length
-            return len(self._TOKENIZER.encode(s, add_special_tokens=True))
-
-        # Validate input
-        if not text or not text.strip():
-            return []
+        text = item['text']
+        original_labels = item.get('label', [])
         
-        chunks: List[str] = []
+        # 1. Tách câu
+        sentences = sent_tokenize(text)
         
-        try:
-            # Quy tắc 3: Xử lý hashtag - tách ra và lưu trữ riêng
-            hashtag_pattern = r'#\w+'
-            hashtags = re.findall(hashtag_pattern, text)
-            text_without_hashtags = re.sub(hashtag_pattern, '', text).strip()
-            
-            # Xoá các chuỗi kẻ ngang trước khi chunk
-            text_without_hashtags = self.remove_hrules(text_without_hashtags)
-            
-            # Tách văn bản thành các segments theo loại
-            segments = []
-            lines = text_without_hashtags.split('\n')
-            
-            # Các từ khóa để nhận diện khối liên hệ
-            contact_keywords = ['hotline', 'địa chỉ', 'website', 'email', 'zalo', 'facebook', 'tel', 'fax', 'tổng đài']
-            
-            i = 0
-            while i < len(lines):
-                line = lines[i].strip()
-                if not line:
-                    i += 1
-                    continue
-                    
-                # Quy tắc 2: Phát hiện khối liên hệ/siêu dữ liệu
-                line_lower = line.lower()
-                is_contact_line = any(keyword in line_lower for keyword in contact_keywords)
-                has_address = bool(re.search(r'(số\s+\d+|đường|phường|quận|tỉnh|thành phố)', line_lower))
-                has_org_pattern = bool(re.search(r'<ORG>.*?</ORG>', line))
-                has_addr_pattern = bool(re.search(r'<ADDR>.*?</ADDR>', line))
-                has_phone_pattern = bool(re.search(r'<PER>.*?</PER>', line))
+        chunks = []
+        
+        # Biến lưu trữ các câu trong chunk hiện tại
+        current_chunk_sentences = [] # List các tuple (start, end, text)
+        current_word_count = 0
+        
+        # Con trỏ tìm kiếm trong văn bản gốc
+        search_cursor = 0
+        
+        # Hàm helper để tạo chunk từ danh sách các câu đã gom
+        def flush_chunk(sent_buffer):
+            if not sent_buffer:
+                return
                 
-                if is_contact_line or has_address or has_org_pattern or has_addr_pattern or has_phone_pattern:
-                    # Gom khối liên hệ liền nhau (không cắt nhỏ)
-                    contact_block = line
-                    j = i + 1
-                    while j < len(lines):
-                        next_line = lines[j].strip()
-                        if not next_line:
-                            j += 1
-                            continue
-                            
-                        next_line_lower = next_line.lower()
-                        is_next_contact = any(keyword in next_line_lower for keyword in contact_keywords)
-                        has_next_address = bool(re.search(r'(số\s+\d+|đường|phường|quận|tỉnh|thành phố)', next_line_lower))
-                        has_next_org = bool(re.search(r'<ORG>.*?</ORG>', next_line))
-                        has_next_addr = bool(re.search(r'<ADDR>.*?</ADDR>', next_line))
-                        has_next_phone = bool(re.search(r'<PER>.*?</PER>', next_line))
-                        
-                        if (is_next_contact or has_next_address or has_next_org or 
-                            has_next_addr or has_next_phone or
-                            re.match(r'^\d+', next_line) or  # có thể là số điện thoại
-                            'www.' in next_line_lower or '.com' in next_line_lower):  # website
-                            contact_block += " " + next_line
-                            j += 1
-                        else:
-                            break
-                    
-                    segments.append({"type": "contact", "content": contact_block})
-                    i = j - 1
-                    
-                # Quy tắc 1: Xử lý mục danh sách
-                elif re.match(r'^[\-\*]\s+', line) or re.match(r'^\d+[\.\)]\s+', line):
-                    list_item = line
-                    j = i + 1
-                    while j < len(lines) and lines[j].strip():
-                        next_line = lines[j].strip()
-                        if not (re.match(r'^[\-\*]\s+', next_line) or re.match(r'^\d+[\.\)]\s+', next_line)):
-                            next_line_lower = next_line.lower()
-                            is_next_contact = any(keyword in next_line_lower for keyword in contact_keywords)
-                            if not is_next_contact:
-                                list_item += " " + next_line
-                                j += 1
-                            else:
-                                break
-                        else:
-                            break
-                    segments.append({"type": "list_item", "content": list_item})
-                    i = j - 1
+            # Lấy vị trí bắt đầu của câu đầu tiên và kết thúc của câu cuối cùng
+            chunk_start = sent_buffer[0][0]
+            chunk_end = sent_buffer[-1][1]
+            
+            # Cắt văn bản gốc để đảm bảo giữ nguyên mọi khoảng trắng/xuống dòng gốc
+            chunk_text = text[chunk_start:chunk_end]
+            
+            new_labels = []
+            for lbl in original_labels:
+                # Kiểm tra nếu label nằm trọn vẹn trong chunk này
+                if lbl['start'] >= chunk_start and lbl['end'] <= chunk_end:
+                    new_lbl = lbl.copy()
+                    # Tính lại toạ độ tương đối so với chunk mới
+                    new_lbl['start'] = lbl['start'] - chunk_start
+                    new_lbl['end'] = lbl['end'] - chunk_start
+                    new_labels.append(new_lbl)
+            
+            chunks.append({
+                "text": chunk_text, 
+                "label": new_labels
+            })
 
-                else:
-                    segments.append({"type": "normal", "content": line})
-                i += 1
+        for sent in sentences:
+            # Tìm vị trí chính xác của câu trong văn bản gốc
+            sent_start = text.find(sent, search_cursor)
+            if sent_start == -1: 
+                # Fallback nếu không tìm thấy (hiếm gặp), dùng cursor hiện tại
+                sent_start = search_cursor
+                
+            sent_end = sent_start + len(sent)
+            sent_word_count = len(sent.split())
             
-            # Ghép segments thành chunks theo token
-            current_chunk = ""
-            segment_buffer = []
-            
-            def _join_contents(items) -> str:
-                return " ".join([s["content"] for s in items]).strip()
+            # Kiểm tra nếu thêm câu này vào thì có vượt quá max_length không
+            if current_word_count + sent_word_count <= max_length:
+                current_chunk_sentences.append((sent_start, sent_end, sent))
+                current_word_count += sent_word_count
+            else:
+                # Nếu vượt quá, đóng gói chunk cũ
+                flush_chunk(current_chunk_sentences)
+                
+                # Tạo chunk mới bắt đầu bằng câu hiện tại
+                current_chunk_sentences = [(sent_start, sent_end, sent)]
+                current_word_count = sent_word_count
+                
+            # Cập nhật con trỏ tìm kiếm
+            search_cursor = sent_end
 
-            def try_add_segment(segment) -> bool:
-                # Thử thêm vào buffer + current_chunk, kiểm tra theo token
-                test_content = _join_contents(segment_buffer + [segment])
-                test_chunk = (current_chunk + " " + test_content).strip() if current_chunk else test_content
-                return _tok_len(test_chunk) <= max_length
-            
-            def flush_buffer():
-                nonlocal current_chunk, segment_buffer
-                if not segment_buffer:
-                    return
-                buffer_content = _join_contents(segment_buffer)
-                if current_chunk:
-                    combined = (current_chunk + " " + buffer_content).strip()
-                    if _tok_len(combined) <= max_length:
-                        current_chunk = combined
-                    else:
-                        chunks.append(current_chunk.strip())
-                        current_chunk = buffer_content
-                else:
-                    current_chunk = buffer_content
-                segment_buffer = []
-            
-            def flush_current():
-                nonlocal current_chunk
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                    current_chunk = ""
-            
-            for segment in segments:
-                if segment["type"] == "contact":
-                    flush_buffer()
-                    flush_current()
-                    if _tok_len(segment["content"]) <= max_length:
-                        chunks.append(segment["content"].strip())
-                    else:
-                        # cắt contact “an toàn” theo câu/cụm (giữ các phần liền kề)
-                        def _split_contact(s: str) -> List[str]:
-                            out, cur = [], ""
-                            sents = self._vn_sentences(s) or [s]
-                            for sent in sents:
-                                cand = (cur + (" " if cur else "") + sent).strip()
-                                if _tok_len(cand) <= max_length:
-                                    cur = cand
-                                else:
-                                    if cur:
-                                        out.append(cur.strip())
-                                    # tách mệnh đề, rồi fallback theo từ nếu cần
-                                    clauses = re.split(r',\s+|;\s+|\s+\-\s+|\s+\|\s+', sent)
-                                    buf = ""
-                                    for c in clauses:
-                                        c = c.strip()
-                                        if not c:
-                                            continue
-                                        cand2 = (buf + (", " if buf else "") + c).strip()
-                                        if _tok_len(cand2) <= max_length:
-                                            buf = cand2
-                                        else:
-                                            if buf:
-                                                out.append(buf.strip())
-                                            wbuf = ""
-                                            for w in c.split():
-                                                cand3 = (wbuf + (" " if wbuf else "") + w).strip()
-                                                if _tok_len(cand3) <= max_length:
-                                                    wbuf = cand3
-                                                else:
-                                                    if wbuf:
-                                                        out.append(wbuf.strip())
-                                                    wbuf = w
-                                            if wbuf:
-                                                out.append(wbuf.strip())
-                                            buf = ""
-                                    if buf:
-                                        out.append(buf.strip())
-                                    cur = ""
-                            if cur:
-                                out.append(cur.strip())
-                            return out
-
-                        chunks.extend(_split_contact(segment["content"]))
-            
-            # Flush phần còn lại
-            flush_buffer()
-            flush_current()
-            
-            # Thêm hashtag (nếu có) vào các chunk mà vẫn không vượt token
-            if hashtags and chunks:
-                hashtag_text = " " + " ".join(hashtags)
-                # thử vào chunk cuối trước
-                candidate = (chunks[-1] + hashtag_text).strip()
-                if _tok_len(candidate) <= max_length:
-                    chunks[-1] = candidate
-                else:
-                    # thử lùi dần các chunk trước đó
-                    placed = False
-                    for k in range(len(chunks) - 2, -1, -1):
-                        test = (chunks[k] + hashtag_text).strip()
-                        if _tok_len(test) <= max_length:
-                            chunks[k] = test
-                            placed = True
-                            break
-                    if not placed:
-                        chunks.append(" ".join(hashtags))
-            elif hashtags:
-                chunks.append(" ".join(hashtags))
-            
-            # Merge các chunk còn nhỏ nếu gộp lại không vượt token
-            optimized_chunks: List[str] = []
-            for ch in chunks:
-                if optimized_chunks:
-                    merged = (optimized_chunks[-1] + " " + ch).strip()
-                    if _tok_len(merged) <= max_length:
-                        optimized_chunks[-1] = merged
-                    else:
-                        optimized_chunks.append(ch)
-                else:
-                    optimized_chunks.append(ch)
-            
-            # Xử lý các chunk vẫn quá dài (token) bằng cách tách câu/cụm (regex)
-            final_chunks: List[str] = []
-            for ch in optimized_chunks:
-                if _tok_len(ch) <= max_length:
-                    final_chunks.append(ch)
-                    continue
+        # Đóng gói chunk cuối cùng nếu còn
+        if current_chunk_sentences:
+            flush_chunk(current_chunk_sentences)
                 
-                # Tách câu, sau đó gộp lại theo token
-                sentences = self._vn_sentences(ch)
-                if not sentences:
-                    sentences = [ch]
-                
-                current_subchunk = ""
-                for sent in sentences:
-                    sent = sent.strip()
-                    if not sent:
-                        continue
-                    # thử thêm câu vào subchunk (thêm ". " để giữ dấu kết thúc)
-                    test_sub = (current_subchunk + (" " if current_subchunk else "") + sent).strip()
-                    if _tok_len(test_sub) <= max_length:
-                        current_subchunk = test_sub
-                    else:
-                        if current_subchunk:
-                            final_chunks.append(current_subchunk.strip())
-                        # nếu câu quá dài so với max_length, tách tiếp theo clause
-                        if _tok_len(sent) > max_length:
-                            def find_best_split_point(text, max_tokens):
-                                """Tìm điểm cắt tốt nhất để giữ nguyên ý nghĩa"""
-                                # Ưu tiên cắt ở cuối câu hoàn chỉnh
-                                sentence_ends = [m.end() for m in re.finditer(r'[.!?]\s+', text)]
-                                for pos in reversed(sentence_ends):
-                                    if _tok_len(text[:pos]) <= max_tokens:
-                                        return pos
-                                
-                                # Nếu không có, cắt ở dấu phẩy + từ nối
-                                clause_ends = [m.end() for m in re.finditer(r'[,;]\s+(?:và|hoặc|nhưng|mà|nên|nếu|khi|để)\s+', text)]
-                                for pos in reversed(clause_ends):
-                                    if _tok_len(text[:pos]) <= max_tokens:
-                                        return pos
-                                
-                                # Cuối cùng mới cắt ở dấu phẩy thường
-                                comma_ends = [m.end() for m in re.finditer(r',\s+', text)]
-                                for pos in reversed(comma_ends):
-                                    if _tok_len(text[:pos]) <= max_tokens:
-                                        return pos
-                                
-                                return None
-
-                            # Sử dụng hàm này thay vì split đơn giản
-                            clauses = []
-                            remaining = sent
-                            while remaining and _tok_len(remaining) > max_length:
-                                split_pos = find_best_split_point(remaining, max_length)
-                                if split_pos:
-                                    clauses.append(remaining[:split_pos].strip())
-                                    remaining = remaining[split_pos:].strip()
-                                else:
-                                    # Fallback: cắt theo từ
-                                    words = remaining.split()
-                                    current = ""
-                                    for word in words:
-                                        test = (current + " " + word).strip() if current else word
-                                        if _tok_len(test) <= max_length:
-                                            current = test
-                                        else:
-                                            if current:
-                                                clauses.append(current)
-                                            current = word
-                                            break
-                                    remaining = " ".join(words[len(current.split()):])
-                            if remaining:
-                                clauses.append(remaining)
-                            current_subchunk = ""
-                            for clause in clauses:
-                                clause = clause.strip()
-                                if not clause:
-                                    continue
-                                test_clause = (current_subchunk + (", " if current_subchunk else "") + clause).strip()
-                                if _tok_len(test_clause) <= max_length:
-                                    current_subchunk = test_clause
-                                else:
-                                    if current_subchunk:
-                                        final_chunks.append(current_subchunk.strip())
-                                    current_subchunk = clause
-                        else:
-                            current_subchunk = sent
-                
-                if current_subchunk:
-                    final_chunks.append(current_subchunk.strip())
-            
-            # Loại bỏ chunk rỗng
-            return [c for c in final_chunks if c.strip()]
-    
-        except Exception:
-            # Fallback: tách theo câu trước, sau đó mới theo từ
-            try:
-                sentences = self._vn_sentences(text)
-                chunks = []
-                current_chunk = ""
-                
-                for sent in sentences:
-                    sent = sent.strip()
-                    if not sent:
-                        continue
-                        
-                    test_chunk = (current_chunk + " " + sent).strip() if current_chunk else sent
-                    if _tok_len(test_chunk) <= max_length:
-                        current_chunk = test_chunk
-                    else:
-                        if current_chunk:
-                            chunks.append(current_chunk.strip())
-                        
-                        # Nếu câu đơn lẻ vẫn quá dài, tách theo từ cẩn thận
-                        if _tok_len(sent) > max_length:
-                            words = sent.split()
-                            word_chunk = ""
-                            for word in words:
-                                test_word = (word_chunk + " " + word).strip() if word_chunk else word
-                                if _tok_len(test_word) <= max_length:
-                                    word_chunk = test_word
-                                else:
-                                    if word_chunk:
-                                        chunks.append(word_chunk.strip())
-                                    word_chunk = word
-                            if word_chunk:
-                                current_chunk = word_chunk.strip()
-                            else:
-                                current_chunk = ""
-                        else:
-                            current_chunk = sent
-                
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                
-                return [c for c in chunks if c.strip()]
-            
-            except:
-                # Ultimate fallback: trả về text gốc nếu không thể xử lý
-                if _tok_len(text) <= max_length:
-                    return [text.strip()]
-                else:
-                    # Cắt cứng theo từ nhưng cẩn thận hơn
-                    words = text.split()
-                    chunks = []
-                    current = ""
-                    
-                    for word in words:
-                        test = (current + " " + word).strip() if current else word
-                        if _tok_len(test) <= max_length:
-                            current = test
-                        else:
-                            if current:
-                                chunks.append(current.strip())
-                                current = word
-                            else:
-                                # Từ đơn quá dài, buộc phải cắt
-                                chunks.append(word)
-                                current = ""
-                    
-                    if current:
-                        chunks.append(current.strip())
-                    
-                    return [c for c in chunks if c.strip()]
+        return chunks
 
     def fix_bio_tags(self, tags):
         """
@@ -453,24 +134,27 @@ class VietnameseNERPredictor:
         
         Args:
             text: Văn bản cần dự đoán
-            
-        Returns:
-            Dictionary chứa kết quả dự đoán
         """
-        chunks = self.smart_chunk_text(text)
+        chunks = self.smart_chunk_text({'text': text}, max_length=self.MAX_LENGTH)
         all_entities = []
         current_offset = 0
         for chunk in chunks:
-            chunk_entities = self._predict_chunk(chunk)
+            chunk_text = chunk["text"]
+            chunk_entities = self._predict_chunk(chunk_text)
             
-            chunk_start = text.find(chunk, current_offset)
+            # Find the chunk in the original text starting from current_offset
+            chunk_start = text.find(chunk_text, current_offset)
             if chunk_start != -1:
                 for entity in chunk_entities:
-                    entity["start"] += chunk_start
-                    entity["end"] += chunk_start
+                    entity["start"] = int(entity["start"] + chunk_start)
+                    entity["end"] = int(entity["end"] + chunk_start)
                     all_entities.append(entity)
-            
-            current_offset = text.find(chunk, current_offset) + len(chunk)
+                
+                # Update current_offset to after this chunk to avoid matching earlier occurrences
+                current_offset = chunk_start + len(chunk_text)
+            else:
+                # If not found, skip adjusting offsets for this chunk
+                print("Warning: chunk not found in original text while reconstructing offsets")
         
         entities_by_type = {}
         for entity in all_entities:

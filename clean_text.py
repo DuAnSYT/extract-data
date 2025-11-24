@@ -90,10 +90,11 @@ def clean_text(text):
     """
     Remove or replace characters that cause Excel errors.
     Handles multiple styles of Unicode mathematical alphabetic symbols, icons, and emojis.
+    Also removes separator lines/strings like '---', '====', '___'.
     """
     if not isinstance(text, str):
         return text
-    
+    text = re.sub(r'[-=_]{3,}', '', text)
     # Dictionary of Unicode mathematical alphabetic symbols and their replacements
     replacements = {
         range(0x1D400, 0x1D433): lambda c: chr(ord(c) - 0x1D400 + ord('A')),  # Bold A-Z and a-z
@@ -116,15 +117,15 @@ def clean_text(text):
         result = ""
         for char in normalized:
             code = ord(char)
-            
+
             # Skip control characters except tab, LF, CR
             if code < 32 and code not in (9, 10, 13):
                 continue
-            
+
             # Remove emojis and symbols (common ranges)
             if is_emoji_or_symbol(char):
                 continue
-            
+
             # Try replacing mathematical symbols
             replaced = False
             for char_range, replacement_func in replacements.items():
@@ -132,7 +133,7 @@ def clean_text(text):
                     result += replacement_func(char)
                     replaced = True
                     break
-            
+
             # Keep the character if it wasn't replaced and is in BMP
             if not replaced and code < 65536:
                 result += char
