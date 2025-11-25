@@ -34,83 +34,81 @@ class VietnameseNERPredictor:
         else:
             print("Model loaded on CPU")
 
-    def smart_chunk_text(self, item: dict, max_length: int = 512):
-        """
-        Chia nhỏ văn bản thành các chunk và tính toán lại nhãn dựa trên lát cắt thực tế.
-        Returns list of dicts: {"text": chunk_text, "label": new_labels}
-        """
-        text = item['text']
-        original_labels = item.get('label', [])
-        
-        # 1. Tách câu
-        sentences = sent_tokenize(text)
-        
-        chunks = []
-        
-        # Biến lưu trữ các câu trong chunk hiện tại
-        current_chunk_sentences = [] # List các tuple (start, end, text)
-        current_word_count = 0
-        
-        # Con trỏ tìm kiếm trong văn bản gốc
-        search_cursor = 0
-        
-        # Hàm helper để tạo chunk từ danh sách các câu đã gom
-        def flush_chunk(sent_buffer):
-            if not sent_buffer:
-                return
-                
-            # Lấy vị trí bắt đầu của câu đầu tiên và kết thúc của câu cuối cùng
-            chunk_start = sent_buffer[0][0]
-            chunk_end = sent_buffer[-1][1]
-            
-            # Cắt văn bản gốc để đảm bảo giữ nguyên mọi khoảng trắng/xuống dòng gốc
-            chunk_text = text[chunk_start:chunk_end]
-            
-            new_labels = []
-            for lbl in original_labels:
-                # Kiểm tra nếu label nằm trọn vẹn trong chunk này
-                if lbl['start'] >= chunk_start and lbl['end'] <= chunk_end:
-                    new_lbl = lbl.copy()
-                    # Tính lại toạ độ tương đối so với chunk mới
-                    new_lbl['start'] = lbl['start'] - chunk_start
-                    new_lbl['end'] = lbl['end'] - chunk_start
-                    new_labels.append(new_lbl)
-            
-            chunks.append({
-                "text": chunk_text, 
-                "label": new_labels
-            })
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
-        for sent in sentences:
-            # Tìm vị trí chính xác của câu trong văn bản gốc
-            sent_start = text.find(sent, search_cursor)
-            if sent_start == -1: 
-                # Fallback nếu không tìm thấy (hiếm gặp), dùng cursor hiện tại
-                sent_start = search_cursor
-                
-            sent_end = sent_start + len(sent)
-            sent_word_count = len(sent.split())
+def smart_chunk_text(item: dict, max_length: int = 510) -> List[dict]:
+    """
+    Chia nhỏ văn bản thành các chunk dựa trên số lượng TOKEN của model Visobert.
+    max_length mặc định là 510 (để chừa chỗ cho 2 special tokens đầu và cuối).
+    """
+    text = item['text']
+    original_labels = item.get('label', [])
+    
+    # Tách câu
+    sentences = sent_tokenize(text)
+    
+    chunks = []
+    
+    # Biến lưu trữ các câu trong chunk hiện tại
+    current_chunk_sentences = [] # List các tuple (start, end, text)
+    current_token_count = 0      # Đổi tên biến để rõ nghĩa hơn
+    
+    # Con trỏ tìm kiếm trong văn bản gốc
+    search_cursor = 0
+    
+    def flush_chunk(sent_buffer):
+        if not sent_buffer:
+            return
             
-            # Kiểm tra nếu thêm câu này vào thì có vượt quá max_length không
-            if current_word_count + sent_word_count <= max_length:
-                current_chunk_sentences.append((sent_start, sent_end, sent))
-                current_word_count += sent_word_count
-            else:
-                # Nếu vượt quá, đóng gói chunk cũ
-                flush_chunk(current_chunk_sentences)
-                
-                # Tạo chunk mới bắt đầu bằng câu hiện tại
-                current_chunk_sentences = [(sent_start, sent_end, sent)]
-                current_word_count = sent_word_count
-                
-            # Cập nhật con trỏ tìm kiếm
-            search_cursor = sent_end
+        chunk_start = sent_buffer[0][0]
+        chunk_end = sent_buffer[-1][1]
+        
+        chunk_text = text[chunk_start:chunk_end]
+        
+        new_labels = []
+        for lbl in original_labels:
+            if lbl['start'] >= chunk_start and lbl['end'] <= chunk_end:
+                new_lbl = lbl.copy()
+                new_lbl['start'] = lbl['start'] - chunk_start
+                new_lbl['end'] = lbl['end'] - chunk_start
+                new_labels.append(new_lbl)
+        
+        chunks.append({
+            "text": chunk_text, 
+            "label": new_labels
+        })
 
-        # Đóng gói chunk cuối cùng nếu còn
-        if current_chunk_sentences:
+    for sent in sentences:
+        # Tìm vị trí chính xác của câu
+        sent_start = text.find(sent, search_cursor)
+        if sent_start == -1: 
+            sent_start = search_cursor
+            
+        sent_end = sent_start + len(sent)
+        
+        sent_token_ids = tokenizer.encode(sent, add_special_tokens=False)
+        sent_token_count = len(sent_token_ids)
+        
+        # Kiểm tra giới hạn token
+        if current_token_count + sent_token_count <= max_length:
+            current_chunk_sentences.append((sent_start, sent_end, sent))
+            current_token_count += sent_token_count
+        else:
+            # Đóng gói chunk cũ
             flush_chunk(current_chunk_sentences)
-                
-        return chunks
+            
+            # Tạo chunk mới
+            current_chunk_sentences = [(sent_start, sent_end, sent)]
+            current_token_count = sent_token_count
+            
+        # Cập nhật con trỏ tìm kiếm
+        search_cursor = sent_end
+
+    # Đóng gói chunk cuối cùng
+    if current_chunk_sentences:
+        flush_chunk(current_chunk_sentences)
+            
+    return chunks
 
     def fix_bio_tags(self, tags):
         """
