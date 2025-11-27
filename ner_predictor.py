@@ -34,81 +34,79 @@ class VietnameseNERPredictor:
         else:
             print("Model loaded on CPU")
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-
-def smart_chunk_text(item: dict, max_length: int = 510) -> List[dict]:
-    """
-    Chia nhỏ văn bản thành các chunk dựa trên số lượng TOKEN của model Visobert.
-    max_length mặc định là 510 (để chừa chỗ cho 2 special tokens đầu và cuối).
-    """
-    text = item['text']
-    original_labels = item.get('label', [])
-    
-    # Tách câu
-    sentences = sent_tokenize(text)
-    
-    chunks = []
-    
-    # Biến lưu trữ các câu trong chunk hiện tại
-    current_chunk_sentences = [] # List các tuple (start, end, text)
-    current_token_count = 0      # Đổi tên biến để rõ nghĩa hơn
-    
-    # Con trỏ tìm kiếm trong văn bản gốc
-    search_cursor = 0
-    
-    def flush_chunk(sent_buffer):
-        if not sent_buffer:
-            return
+    def smart_chunk_text(self, item: dict, max_length: int = 510) -> List[dict]:
+        """
+        Chia nhỏ văn bản thành các chunk dựa trên số lượng TOKEN của model Visobert.
+        max_length mặc định là 510 (để chừa chỗ cho 2 special tokens đầu và cuối).
+        """
+        text = item['text']
+        original_labels = item.get('label', [])
+        
+        # Tách câu
+        sentences = sent_tokenize(text)
+        
+        chunks = []
+        
+        # Biến lưu trữ các câu trong chunk hiện tại
+        current_chunk_sentences = [] # List các tuple (start, end, text)
+        current_token_count = 0      # Đổi tên biến để rõ nghĩa hơn
+        
+        # Con trỏ tìm kiếm trong văn bản gốc
+        search_cursor = 0
+        
+        def flush_chunk(sent_buffer):
+            if not sent_buffer:
+                return
+                
+            chunk_start = sent_buffer[0][0]
+            chunk_end = sent_buffer[-1][1]
             
-        chunk_start = sent_buffer[0][0]
-        chunk_end = sent_buffer[-1][1]
-        
-        chunk_text = text[chunk_start:chunk_end]
-        
-        new_labels = []
-        for lbl in original_labels:
-            if lbl['start'] >= chunk_start and lbl['end'] <= chunk_end:
-                new_lbl = lbl.copy()
-                new_lbl['start'] = lbl['start'] - chunk_start
-                new_lbl['end'] = lbl['end'] - chunk_start
-                new_labels.append(new_lbl)
-        
-        chunks.append({
-            "text": chunk_text, 
-            "label": new_labels
-        })
-
-    for sent in sentences:
-        # Tìm vị trí chính xác của câu
-        sent_start = text.find(sent, search_cursor)
-        if sent_start == -1: 
-            sent_start = search_cursor
+            chunk_text = text[chunk_start:chunk_end]
             
-        sent_end = sent_start + len(sent)
-        
-        sent_token_ids = tokenizer.encode(sent, add_special_tokens=False)
-        sent_token_count = len(sent_token_ids)
-        
-        # Kiểm tra giới hạn token
-        if current_token_count + sent_token_count <= max_length:
-            current_chunk_sentences.append((sent_start, sent_end, sent))
-            current_token_count += sent_token_count
-        else:
-            # Đóng gói chunk cũ
+            new_labels = []
+            for lbl in original_labels:
+                if lbl['start'] >= chunk_start and lbl['end'] <= chunk_end:
+                    new_lbl = lbl.copy()
+                    new_lbl['start'] = lbl['start'] - chunk_start
+                    new_lbl['end'] = lbl['end'] - chunk_start
+                    new_labels.append(new_lbl)
+            
+            chunks.append({
+                "text": chunk_text, 
+                "label": new_labels
+            })
+
+        for sent in sentences:
+            # Tìm vị trí chính xác của câu
+            sent_start = text.find(sent, search_cursor)
+            if sent_start == -1: 
+                sent_start = search_cursor
+                
+            sent_end = sent_start + len(sent)
+            
+            sent_token_ids = self.tokenizer.encode(sent, add_special_tokens=False)
+            sent_token_count = len(sent_token_ids)
+            
+            # Kiểm tra giới hạn token
+            if current_token_count + sent_token_count <= max_length:
+                current_chunk_sentences.append((sent_start, sent_end, sent))
+                current_token_count += sent_token_count
+            else:
+                # Đóng gói chunk cũ
+                flush_chunk(current_chunk_sentences)
+                
+                # Tạo chunk mới
+                current_chunk_sentences = [(sent_start, sent_end, sent)]
+                current_token_count = sent_token_count
+                
+            # Cập nhật con trỏ tìm kiếm
+            search_cursor = sent_end
+
+        # Đóng gói chunk cuối cùng
+        if current_chunk_sentences:
             flush_chunk(current_chunk_sentences)
-            
-            # Tạo chunk mới
-            current_chunk_sentences = [(sent_start, sent_end, sent)]
-            current_token_count = sent_token_count
-            
-        # Cập nhật con trỏ tìm kiếm
-        search_cursor = sent_end
-
-    # Đóng gói chunk cuối cùng
-    if current_chunk_sentences:
-        flush_chunk(current_chunk_sentences)
-            
-    return chunks
+                
+        return chunks
 
     def fix_bio_tags(self, tags):
         """
@@ -269,6 +267,7 @@ def smart_chunk_text(item: dict, max_length: int = 510) -> List[dict]:
             output.append("❌ No entities detected")
         
         return "\n".join(output)
+
 
 def main():
     """Test function đơn giản"""
