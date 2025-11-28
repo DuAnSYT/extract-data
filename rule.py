@@ -46,52 +46,39 @@ def extract_licenses_and_certificates(text):
     Returns:
         dict: Dictionary with separate lists for licenses and certificates
     """
-    # Combined pattern for both types
-    combined_regex = r'\b\d{2,7}\s*/\s*(HCM|SYT|BYT)(?:-(GPHĐ|CCHN))?\b'
-    
     operating_licenses = []
     medical_certificates = []
     
-    for match in re.finditer(combined_regex, text):
-        full_match = match.group(0)
-        number_part = match.group(0).split('/')[0].strip()
-        agency_part = match.group(1)  # HCM, SYT, BYT
-        suffix_part = match.group(2)  # GPHĐ or CCHN
+    # Danh sách các cơ quan được chấp nhận
+    valid_agencies = ['HCM', 'SYT', 'BYT']
+    
+    # Pattern cho Giấy phép hoạt động
+    # Ví dụ: 09384/HCM, 12345/SYT, 12345/BYT, 12345/HCM-GPHĐ
+    license_pattern = r'[Gg]iấy\s*phép\s*hoạt\s*động[:\s]*(\d{2,7})\s*/\s*([A-Za-z]+)(?:-[A-Za-zĐ]+)?(?:/[A-Za-z0-9]+)?'
+    
+    # Pattern cho Chứng chỉ hành nghề
+    # Ví dụ: 13949/SYT, 008933/SYT, 12345/HCM-CCHN
+    certificate_pattern = r'[Cc]hứng\s*chỉ\s*hành\s*nghề[:\s]*(\d{2,7})\s*/\s*([A-Za-z]+)(?:-[A-Za-zĐ]+)?(?:/[A-Za-z0-9]+)?'
+    
+    # Tìm Giấy phép hoạt động
+    for match in re.finditer(license_pattern, text):
+        number = match.group(1).strip()
+        agency = match.group(2).strip().upper()
         
-        # Normalize spacing
-        base_format = f"{number_part}/{agency_part}"
+        # Chỉ lấy nếu thuộc HCM, SYT, BYT
+        if agency in valid_agencies:
+            license_num = f"{number}/{agency}"
+            operating_licenses.append(license_num)
+    
+    # Tìm Chứng chỉ hành nghề
+    for match in re.finditer(certificate_pattern, text):
+        number = match.group(1).strip()
+        agency = match.group(2).strip().upper()
         
-        if suffix_part:
-            # Already has suffix, determine type
-            if suffix_part == 'GPHĐ':
-                operating_licenses.append(f"{base_format}-GPHĐ")
-            elif suffix_part == 'CCHN' and agency_part == 'HCM':
-                medical_certificates.append(f"{base_format}-CCHN")
-        else:
-            # No suffix, check context to determine type
-            context = text[max(0, match.start()-50):match.end()+50].lower()
-            
-            # Keywords for operating license
-            license_keywords = ['giấy phép hoạt động', 'gphđ', 'phép hoạt động', 'hoạt động']
-            
-            # Keywords for medical certificate (only for HCM)
-            medical_keywords = ['chứng chỉ hành nghề', 'cchn', 'hành nghề', 'chứng chỉ']
-            
-            # Determine type based on context
-            has_license_context = any(keyword in context for keyword in license_keywords)
-            has_medical_context = any(keyword in context for keyword in medical_keywords)
-            
-            if has_license_context and not has_medical_context:
-                operating_licenses.append(f"{base_format}-GPHĐ")
-            elif has_medical_context and not has_license_context and agency_part == 'HCM':
-                medical_certificates.append(f"{base_format}-CCHN")
-            elif not has_license_context and not has_medical_context:
-                # Default behavior: operating license for all agencies, medical certificate only for HCM
-                if agency_part in ['SYT', 'BYT']:
-                    operating_licenses.append(f"{base_format}-GPHĐ")
-                elif agency_part == 'HCM':
-                    # For HCM without context, could be either - add both possibilities
-                    operating_licenses.append(f"{base_format}-GPHĐ")
+        # Chỉ lấy nếu thuộc HCM, SYT, BYT
+        if agency in valid_agencies:
+            cert_num = f"{number}/{agency}"
+            medical_certificates.append(cert_num)
     
     return {
         'operating_licenses': list(set(operating_licenses)),
