@@ -1,4 +1,4 @@
-# Medical Ads Classification Model
+# Medical Ads Information Extraction Model
 
 AI model for extracting structured information from medical-related articles/posts, including:
 
