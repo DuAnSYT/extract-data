@@ -1,7 +1,7 @@
-from ner_predictor import VietnameseNERPredictor
-from ner_postprocessing import quick_postprocess as ner_postprocess
-from rule import extract_phone, extract_licenses_and_certificates
-from clean_text import clean_text, remove_crawl_artifacts
+from extraction.ner_predictor import VietnameseNERPredictor
+from extraction.ner_postprocessing import quick_postprocess as ner_postprocess
+from extraction.rule import extract_phone, extract_licenses_and_certificates
+from extraction.clean_text import clean_text, remove_crawl_artifacts
 
 
 def main(ad_content):

@@ -16,7 +16,7 @@ from underthesea import sent_tokenize
 class VietnameseNERPredictor:
     """Simple Vietnamese NER Predictor"""
     
-    def __init__(self, model_path: str = "visobert_model/final"):
+    def __init__(self, model_path: str = "weights/visobert_model/final"):
         """Initialize predictor with model"""
         self.model_path = os.path.join(os.path.dirname(__file__), model_path)
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)

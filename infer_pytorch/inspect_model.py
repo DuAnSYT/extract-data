@@ -253,7 +253,7 @@ def visualize_token_map(text):
 
 # Khởi tạo predictor toàn cục
 # LƯU Ý: Đổi đường dẫn model ở đây nếu chạy local
-MODEL_NAME = "visobert_model/final" 
+MODEL_NAME = "extraction/weights/visobert_model/final" 
 # Nếu bạn chưa train NER, model này sẽ load weight random cho head classification
 # Nếu bạn có folder model đã train, thay path vào đây: e.g., "visobert_model/final"
 try:

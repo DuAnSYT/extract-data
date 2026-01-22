@@ -1,0 +1,8 @@
+underthesea
+transformers
+sentencepiece
+tqdm
+google-genai
+ftfy
+pandas
+openpyxl
